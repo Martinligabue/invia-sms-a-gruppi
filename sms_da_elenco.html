@@ -1,0 +1,150 @@
+<!doctype html><html lang="it"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Invio SMS da elenco</title>
+<style>
+:root{--bg:#fff;--fg:#1c2430;--mu:#5d6876;--li:#dfe4ea;--ac:#0b6e4f;--wa:#8a5a00}
+@media(prefers-color-scheme:dark){:root{--bg:#14181d;--fg:#e8ecf1;--mu:#98a3b0;--li:#2a323c;--ac:#4cc79a;--wa:#e0b24a}}
+body{margin:0 auto;max-width:34rem;padding:1rem;background:var(--bg);color:var(--fg);font:1rem/1.45 system-ui,sans-serif}
+h1{font-size:1.3rem;margin:0 0 .6rem}h2{font-size:1rem;margin:1rem 0 .3rem}p,ol{margin:.3rem 0 .8rem;color:var(--mu)}
+pre{background:var(--li);padding:.5rem;border-radius:.4rem;overflow-x:auto;font-size:.85rem;color:var(--fg)}
+details{border:1px solid var(--li);border-radius:.5rem;padding:.5rem .7rem;margin:.6rem 0}summary{cursor:pointer;font-weight:600}
+textarea,input[type=text]{width:100%;box-sizing:border-box;font:inherit;padding:.5rem;border:1px solid var(--li);border-radius:.5rem;background:var(--bg);color:var(--fg)}
+.bar{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:.8rem 0;position:sticky;top:0;background:var(--bg);padding:.5rem 0}
+button,.b,.f{font:inherit;border:1px solid var(--li);background:none;color:var(--fg);padding:.55rem .8rem;border-radius:.5rem}
+button.on{border-color:var(--ac);color:var(--ac);font-weight:600}
+ul{list-style:none;padding:0;margin:0}li{display:flex;gap:.6rem;align-items:center;justify-content:space-between;padding:.7rem 0;border-bottom:1px solid var(--li)}
+li small{display:block;color:var(--mu)}li small.w,#avviso{color:var(--wa)}
+.b{background:var(--ac);border-color:var(--ac);color:var(--bg);text-decoration:none;font-weight:600;white-space:nowrap}
+li.d .b{display:none}li:not(.d) .u{display:none}li.d .n{color:var(--mu);text-decoration:line-through}
+.blocca .b{opacity:.35;pointer-events:none}#c{font-weight:600}input[type=file]{display:none}
+</style>
+<h1><span id="t">Invio SMS da elenco</span> <span id="c"></span></h1>
+
+<details id="aiuto" open><summary>Come si usa</summary>
+<ol>
+<li><b>Prepara l'elenco</b> in un file CSV (da Excel, LibreOffice o Fogli: Salva con nome → CSV). Una riga per persona, con le intestazioni nella prima riga. Colonna obbligatoria: <b>telefono</b>. Facoltative: <b>nome</b>, <b>cognome</b>, <b>riga</b> (un identificativo unico), <b>username</b> e <b>note</b> (compaiono sotto il nome). Separatore <code>;</code> oppure <code>,</code>. Esempio:
+<pre>cognome;nome;telefono;note
+Rossi;Mario;3331234567;gruppo A
+Bianchi;Anna;+393339876543;</pre></li>
+<li><b>Carica i dati</b> con «Carica CSV» (scegli il file) o con «Incolla dati» (incolla il testo). Per averli già dentro la pagina ogni volta che la apri, incolla il CSV nel blocco «dati» in fondo al file HTML.</li>
+<li><b>Scrivi il messaggio</b> qui sotto: <code>{nome}</code> e <code>{cognome}</code> vengono sostituiti con i dati di ogni riga. I pulsanti restano bloccati finché nel testo ci sono parti tra parentesi quadre.</li>
+<li><b>Tocca «Invia SMS»</b>: si apre l'app Messaggi con numero e testo già scritti. Premi Invia e torna qui: la persona passa tra i «Fatti» (con «Annulla» la rimetti in lista). Android e iPhone non permettono l'invio automatico da un link, l'ultimo tocco su Invia è sempre tuo.</li>
+</ol>
+<p>I numeri senza «+» ricevono il prefisso internazionale scritto qui sotto (se vuoto restano come sono). La pagina non invia dati in rete: elenco, messaggio e «Fatti» restano su questo dispositivo. «Copia elenco fatti» copia chi hai già raggiunto, per tenerne traccia.</p>
+</details>
+
+<h2>Elenco</h2>
+<div class="bar"><label class="f">Carica CSV<input type="file" id="file" accept=".csv,.txt,text/csv,text/plain"></label></div>
+<details><summary>Incolla dati</summary>
+<textarea id="inc" rows="5" placeholder="cognome;nome;telefono&#10;Rossi;Mario;3331234567"></textarea>
+<p><button id="usa">Usa questi dati</button></p></details>
+
+<h2>Messaggio</h2>
+<textarea id="msg" rows="4"></textarea>
+<p id="anteprima"></p><p id="avviso"></p>
+<label>Prefisso per i numeri senza «+» <input type="text" id="pref" placeholder="es. +39" style="width:7rem"></label>
+
+<div class="bar"><button data-f="todo" class="on">Da fare</button><button data-f="done">Fatti</button>
+<label><input type="checkbox" id="ios"> iPhone</label><button id="copy">Copia elenco fatti</button></div>
+<ul id="l"></ul>
+
+<script>
+/* LOGICA — non serve modificarla: dati e impostazioni iniziali stanno in fondo alla pagina. */
+var cfg, righe = [], done = {}, filtro = "todo", LID = "";
+function $(i){return document.getElementById(i)}
+function enc(t){return encodeURIComponent(t).replace(/[!'()*]/g,function(c){return"%"+c.charCodeAt(0).toString(16).toUpperCase()})}
+function cap(s){return s.toLowerCase().replace(/(^|[\s'-])([a-zà-ÿ])/g,function(m,a,b){return a+b.toUpperCase()})}
+function parse(t){
+  t=t.replace(/^\uFEFF/,"").trim();if(!t)return[];
+  var p=t.split(/\r?\n/)[0],d=p.split(";").length>=p.split(",").length?";":",";
+  var rows=[],r=[],c="",q=false;
+  for(var i=0;i<t.length;i++){var ch=t[i];
+    if(q){if(ch=='"'){if(t[i+1]=='"'){c+='"';i++}else q=false}else c+=ch}
+    else if(ch=='"')q=true;else if(ch==d){r.push(c);c=""}
+    else if(ch=="\n"){r.push(c.replace(/\r$/,""));rows.push(r);r=[];c=""}else c+=ch}
+  r.push(c);rows.push(r);
+  var h=rows.shift().map(function(x){return x.trim().toLowerCase()});
+  return rows.filter(function(x){return x.join("").trim()}).map(function(x,n){var o={};
+    h.forEach(function(k,i){o[k]=(x[i]||"").trim()});o.riga=o.riga||String(n+1);return o});
+}
+function tel(s){s=(s||"").replace(/[^\d+]/g,"");if(s.indexOf("00")==0)s="+"+s.slice(2);
+  if(s[0]=="+")return/^\+\d{8,15}$/.test(s)?s:"";
+  var p=($("pref").value||"").replace(/[^\d+]/g,"");
+  if(p){if(p[0]!="+")p="+"+p;s=p+s;return/^\+\d{8,15}$/.test(s)?s:""}
+  return/^\d{6,15}$/.test(s)?s:""}
+function msg(o){return $("msg").value.replace(/\{nome\}/g,cap(o.nome||"")).replace(/\{cognome\}/g,cap(o.cognome||""))
+  .replace(/[ \t]{2,}/g," ").replace(/\s+,/g,",").trim()}
+function hash(s){var h=0;for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))|0;return Math.abs(h)}
+function carica(testo){
+  righe=parse(testo);LID="sms-"+hash(testo);done={};
+  try{done=JSON.parse(localStorage.getItem(LID)||"{}")}catch(e){}
+  $("aiuto").open=!righe.length;mostra();
+}
+function mostra(){
+  var ul=$("l");ul.innerHTML="";
+  if(!righe.length){var e=document.createElement("li");e.textContent="Nessun elenco caricato: usa «Carica CSV» o «Incolla dati».";ul.appendChild(e)}
+  righe.forEach(function(o){var li=document.createElement("li"),t=tel(o.telefono);li._o=o;li.dataset.id=o.riga;li.dataset.tel=t;
+    var n=document.createElement("span");n.className="n";n.appendChild(document.createTextNode(cap((o.cognome||"")+" "+(o.nome||"")).trim()||"(senza nome)"));
+    [t||"nessun numero valido",o.username?"@"+o.username:"",o.note].forEach(function(x,i){if(x){var s=document.createElement("small");
+      if(i==0&&!t)s.className="w";s.textContent=x;n.appendChild(s)}});
+    li.appendChild(n);
+    if(t){var a=document.createElement("a");a.className="b";a.textContent="Invia SMS";a.dataset.t=t;
+      a.addEventListener("click",function(){done[o.riga]=1;salva();setTimeout(render,400)});li.appendChild(a)}
+    var u=document.createElement("button");u.className="u";u.textContent="Annulla";
+    u.addEventListener("click",function(){delete done[o.riga];salva();render()});li.appendChild(u);ul.appendChild(li)});
+  render();
+}
+function salva(){try{localStorage.setItem(LID,JSON.stringify(done))}catch(e){}}
+function salvaImp(){try{localStorage.setItem("sms-impostazioni",JSON.stringify({messaggio:$("msg").value,prefisso:$("pref").value}))}catch(e){}}
+function render(){var n=0,ios=$("ios").checked,m=$("msg").value.trim(),ok=m&&!/[\[\]]/.test(m);
+  $("l").classList.toggle("blocca",!ok);
+  $("avviso").textContent=ok?"":"Scrivi il messaggio (senza parti tra parentesi quadre) per attivare i pulsanti.";
+  $("anteprima").textContent=righe.length&&ok?"Anteprima: «"+msg(righe[0])+"» ("+msg(righe[0]).length+" caratteri)":"";
+  [].forEach.call(document.querySelectorAll("#l li[data-id]"),function(li){var d=!!done[li.dataset.id];n+=d;li.classList.toggle("d",d);
+    li.hidden=(filtro==="todo"&&d)||(filtro==="done"&&!d);var a=li.querySelector(".b");
+    if(a)a.href="sms:"+a.dataset.t+(ios?"&":"?")+"body="+enc(msg(li._o))});
+  $("c").textContent=righe.length?n+" / "+righe.length:""}
+function init(){
+  cfg=JSON.parse($("config").textContent);var imp={};
+  try{imp=JSON.parse(localStorage.getItem("sms-impostazioni")||"{}")}catch(e){}
+  $("t").textContent=cfg.titolo||"Invio SMS da elenco";document.title=$("t").textContent;
+  $("msg").value=imp.messaggio||cfg.messaggio||"";$("pref").value=imp.prefisso!=null?imp.prefisso:(cfg.prefisso||"");
+  $("ios").checked=/iPhone|iPad|iPod/.test(navigator.userAgent);
+  document.querySelectorAll("[data-f]").forEach(function(b){b.addEventListener("click",function(){filtro=b.dataset.f;
+    document.querySelectorAll("[data-f]").forEach(function(x){x.classList.toggle("on",x===b)});render()})});
+  $("ios").addEventListener("change",render);
+  $("msg").addEventListener("input",function(){salvaImp();render()});
+  $("pref").addEventListener("input",function(){salvaImp();mostra()});
+  $("usa").addEventListener("click",function(){carica($("inc").value)});
+  $("copy").addEventListener("click",function(){
+    var t=[].filter.call(document.querySelectorAll("#l li[data-id]"),function(li){return done[li.dataset.id]})
+      .map(function(li){return li.dataset.id+";"+li.dataset.tel}).join("\n");
+    if(!t){alert("Nessuno segnato come fatto");return}
+    (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(function(){alert("Copiati "+t.split("\n").length+" numeri")},
+      function(){prompt("Copia questo elenco:",t)})});
+  $("file").addEventListener("change",function(e){var f=e.target.files[0];if(!f)return;
+    f.arrayBuffer().then(function(b){var s=new TextDecoder("utf-8").decode(b);
+      if(s.indexOf("\uFFFD")>=0)s=new TextDecoder("windows-1252").decode(b);carica(s)})});
+  document.addEventListener("visibilitychange",render);
+  carica($("dati").textContent);
+}
+window.addEventListener("DOMContentLoaded",init);
+</script>
+
+<!-- ======================================================================================
+     DATI E IMPOSTAZIONI INIZIALI — facoltativo: serve solo se vuoi che la pagina si apra
+     gia' con un elenco e un messaggio. Altrimenti lascia com'e' e usa i pulsanti in alto.
+     1) "config": titolo della pagina, testo iniziale dell'SMS ({nome} e {cognome} vengono
+        sostituiti per ogni riga) e prefisso internazionale per i numeri senza "+" (es. "+39").
+     2) "dati": il CSV (intestazione + una riga per persona; colonna obbligatoria: telefono).
+     ====================================================================================== -->
+<script id="config" type="application/json">
+{
+  "titolo": "Invio SMS da elenco",
+  "messaggio": "Ciao {nome}, [scrivi qui il tuo messaggio]",
+  "prefisso": ""
+}
+</script>
+<script id="dati" type="text/csv">
+cognome;nome;telefono;username;note
+</script>
+</html>
